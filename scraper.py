@@ -108,9 +108,9 @@ MAIL_REDAKTION_BODY = """Hallo Redaktion,
 
 in der TRV App wurde ein neuer News-Artikel veröffentlicht:
 
-Titel:     {title}
-Autor:     {author}
-Datum:     {datetime}
+Titel: {title}
+Autor: {author}
+Datum: {datetime}
 Kategorie: {category}
 
 Artikel (HTML + Druckversion) in der Nextcloud:
