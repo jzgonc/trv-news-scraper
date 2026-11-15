@@ -32,7 +32,7 @@ Code: `scraper.py` (scraping and run logic), `pdf.py` + `templates/` + `fonts/` 
 | `scraper.py` | normal run (what the timer does) |
 | `scraper.py --dry-run` | everything except upload and mails; prints what would be sent |
 | `scraper.py --test-to you@example.org` | uploads the newest saved article and sends both mails to you; delivery status is not changed |
-| `scraper.py --baseline` | saves everything online and marks it delivered (first server run only) |
+| `scraper.py --baseline` | saves everything online, uploads it to Nextcloud (skipping folders already up to date there) and marks the mails as sent (first server run only) |
 
 Local run (Mac): `conda run -n scraper python scraper.py --dry-run` (needs `pip install -r requirements.txt` or conda-forge `weasyprint pillow`).
 
@@ -149,7 +149,7 @@ This uploads the newest article to Nextcloud (`App-News/...`) and sends **both**
 sudo docker compose run --rm scraper --baseline
 ```
 
-This marks everything currently online as delivered. No uploads, no mails.
+This saves everything currently online and uploads it to Nextcloud. Folders that are already there and up to date (e.g. the one from the test in step 7) are skipped. No mails are sent. Failed uploads are retried by the next normal run.
 
 ### 9. Enable the timer
 

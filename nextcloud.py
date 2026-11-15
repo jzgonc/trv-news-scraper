@@ -6,12 +6,23 @@ Endpoints:
 """
 
 import logging
+import xml.etree.ElementTree as ET
+from datetime import datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import requests
 
 log = logging.getLogger(__name__)
+
+
+DAV = "{DAV:}"
+PROPFIND_BODY = (
+    '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop>'
+    "<d:resourcetype/><d:getcontentlength/><d:getlastmodified/>"
+    "</d:prop></d:propfind>"
+)
 
 
 class NextcloudError(RuntimeError):
@@ -95,6 +106,25 @@ class NextcloudShare:
 
     def delete(self, remote_path: str) -> None:
         self._request("DELETE", remote_path, ok=(200, 204, 404))
+
+    def list_files(self, remote_dir: str) -> dict[str, tuple[int, datetime | None]]:
+        """Files directly inside `remote_dir`: name -> (size, last modified).
+        Returns {} if the folder does not exist."""
+        resp = self._request("PROPFIND", remote_dir.strip("/") + "/", ok=(207, 404),
+                             headers={"Depth": "1", "Content-Type": "application/xml"},
+                             data=PROPFIND_BODY)
+        if resp.status_code == 404:
+            return {}
+        files = {}
+        for item in ET.fromstring(resp.content).iter(f"{DAV}response"):
+            props = item.find(f"{DAV}propstat/{DAV}prop")
+            if props is None or props.find(f"{DAV}resourcetype/{DAV}collection") is not None:
+                continue
+            name = unquote(item.findtext(f"{DAV}href", "").rstrip("/").rsplit("/", 1)[-1])
+            size = int(props.findtext(f"{DAV}getcontentlength") or -1)
+            modified = props.findtext(f"{DAV}getlastmodified")
+            files[name] = (size, parsedate_to_datetime(modified) if modified else None)
+        return files
 
     def upload_folder(self, local_dir: Path, remote_dir: str, files: list[str],
                       replace_subdirs: tuple[str, ...] = ()) -> None:

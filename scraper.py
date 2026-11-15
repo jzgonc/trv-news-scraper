@@ -17,7 +17,8 @@ that is baked into the redirected URL. This script replays that same flow:
      and the office (PDF attached). Delivery state lives in each metadata.json, so failed
      steps are retried on the next run and successful steps are never repeated.
 
-Run modes: normal (default), --baseline (once, marks everything as delivered),
+Run modes: normal (default), --baseline (once: uploads everything to Nextcloud unless already
+there, marks all mails as sent),
 --dry-run (no upload/mail, prints what would be sent), --test-to ADDRESS (end-to-end test).
 """
 
@@ -466,6 +467,27 @@ def upload_files(article_path: Path) -> list[str]:
     return files
 
 
+def remote_up_to_date(share: NextcloudShare, article_path: Path, remote_dir: str,
+                      files: list[str]) -> bool:
+    """True if every file is on the share with the same size and was uploaded after the local
+    file was last written, and the remote images/ folder holds no extra files."""
+    listings = {}
+    for rel in files:
+        parent = str(Path(rel).parent)
+        if parent not in listings:
+            listings[parent] = share.list_files(remote_dir if parent == "." else f"{remote_dir}/{parent}")
+        remote = listings[parent].get(Path(rel).name)
+        local = (article_path / rel).stat()
+        if remote is None or remote[0] != local.st_size or remote[1] is None:
+            return False
+        if remote[1] < datetime.fromtimestamp(local.st_mtime, timezone.utc):
+            return False
+    local_images = {Path(rel).name for rel in files if rel.startswith("images/")}
+    if not local_images:
+        return True
+    return set(listings["images"]) == local_images
+
+
 def mail_texts(meta: dict, link: str) -> dict:
     fields = {
         "title": meta.get("title") or "",
@@ -482,11 +504,14 @@ def mail_texts(meta: dict, link: str) -> dict:
 
 
 class Delivery:
-    """Lazily connects to Nextcloud/SMTP so dry runs need no credentials."""
+    """Lazily connects to Nextcloud/SMTP so dry runs need no credentials.
 
-    def __init__(self, settings, dry_run: bool):
+    With `skip_uploaded`, articles already up to date on the share are not uploaded again."""
+
+    def __init__(self, settings, dry_run: bool, skip_uploaded: bool = False):
         self.settings = settings
         self.dry_run = dry_run
+        self.skip_uploaded = skip_uploaded
         self._share = None
         self._mailer = None
 
@@ -528,8 +553,11 @@ class Delivery:
                 if self.dry_run:
                     log.info("  [dry-run] would upload %d file(s) to %s/", len(files), remote_dir)
                     continue
-                self.share.upload_folder(article_path, remote_dir, files, replace_subdirs=("images",))
-                log.info("  uploaded %d file(s) to Nextcloud %s/", len(files), remote_dir)
+                if self.skip_uploaded and remote_up_to_date(self.share, article_path, remote_dir, files):
+                    log.info("  already on Nextcloud: %s/", remote_dir)
+                else:
+                    self.share.upload_folder(article_path, remote_dir, files, replace_subdirs=("images",))
+                    log.info("  uploaded %d file(s) to Nextcloud %s/", len(files), remote_dir)
             else:
                 subject, body = texts[step]
                 attachments = [article_path / "article.pdf"] if step == "mail_office" else []
@@ -564,6 +592,8 @@ def sync_articles(session, settings, output_dir: Path, baseline: bool) -> tuple[
     now = datetime.now(timezone.utc)
     min_age = timedelta(minutes=settings.min_age_minutes)
     all_done = {step: True for step in DELIVERY_STEPS}
+    # baseline: mails count as sent, but everything goes to Nextcloud (skipped there if present)
+    baseline_state = {step: step != "nextcloud" for step in DELIVERY_STEPS}
     saved = 0
 
     for entry in sorted(entries, key=lambda e: e.get("publishedDate") or ""):
@@ -583,10 +613,10 @@ def sync_articles(session, settings, output_dir: Path, baseline: bool) -> tuple[
                 if baseline:
                     if changed or not (path / "article.pdf").exists():
                         log.info("Baseline update: %s", title)
-                        save_article(session, entry, path, category, dict(all_done))
+                        save_article(session, entry, path, category, dict(baseline_state))
                         saved += 1
-                    elif meta.get("delivery") != all_done:
-                        meta["delivery"] = dict(all_done)
+                    elif meta.get("delivery") != baseline_state:
+                        meta["delivery"] = dict(baseline_state)
                         write_json(path / "metadata.json", meta)
                     continue
                 if not changed:
@@ -608,7 +638,7 @@ def sync_articles(session, settings, output_dir: Path, baseline: bool) -> tuple[
             if path.exists():  # leftover of an interrupted earlier attempt (no metadata.json)
                 shutil.rmtree(path)
             log.info("%s: %s -> %s", "Baseline" if baseline else "New", title, name)
-            delivery = dict(all_done) if baseline else {step: False for step in DELIVERY_STEPS}
+            delivery = dict(baseline_state) if baseline else {step: False for step in DELIVERY_STEPS}
             save_article(session, entry, path, category, delivery)
             saved += 1
         except Exception as exc:
@@ -617,9 +647,10 @@ def sync_articles(session, settings, output_dir: Path, baseline: bool) -> tuple[
     return saved, failures
 
 
-def deliver_pending(settings, output_dir: Path, dry_run: bool) -> list[str]:
+def deliver_pending(settings, output_dir: Path, dry_run: bool,
+                    skip_uploaded: bool = False) -> list[str]:
     failures = []
-    delivery = Delivery(settings, dry_run)
+    delivery = Delivery(settings, dry_run, skip_uploaded)
     pending = [(path, meta) for path, meta in load_local_articles(output_dir).values()
                if not all((meta.get("delivery") or {}).get(s, True) for s in DELIVERY_STEPS)]
     pending.sort(key=lambda pm: pm[1].get("published_date") or "")
@@ -700,7 +731,8 @@ def main():
     parser.add_argument("--env-file", type=Path, help="Path to .env (default: next to scraper.py)")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--baseline", action="store_true",
-                      help="Save everything online and mark it delivered (first run only)")
+                      help="Save everything online, upload it to Nextcloud unless already there "
+                           "and mark the mails as sent (first run only)")
     mode.add_argument("--dry-run", action="store_true",
                       help="Everything except upload and emails; print what would be sent")
     mode.add_argument("--test-to", metavar="ADDRESS",
@@ -735,10 +767,13 @@ def main():
         failures.append(f"scrape: {exc}")
 
     if args.baseline:
+        # mails are already marked as sent, so this only uploads; failed uploads are retried
+        # by the next normal run and do not block the baseline marker
         if not failures:
             (output_dir / BASELINE_MARKER).write_text(
                 datetime.now(timezone.utc).isoformat(timespec="seconds"), encoding="utf-8")
-            log.info("Baseline complete - from now on only new articles are delivered")
+            log.info("Baseline saved - from now on only new articles are mailed")
+        failures += deliver_pending(settings, output_dir, dry_run=False, skip_uploaded=True)
     else:
         failures += deliver_pending(settings, output_dir, args.dry_run)
 
