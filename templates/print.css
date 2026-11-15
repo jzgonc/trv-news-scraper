@@ -19,7 +19,8 @@
   }
 }
 
-:root { --accent: #1b3a66; }
+/* Default colors; overridden per category (templates/categories.json) via inline style on <html>. */
+:root { --accent: #1b3a66; --accent-contrast: #ffffff; }
 
 html { font-family: "Raleway"; font-size: 11.5pt; line-height: 1.5; color: #1a1a1a;
        font-variant-numeric: lining-nums; }
@@ -29,7 +30,7 @@ header { margin-bottom: 7mm; }
 .label {
   display: inline-block;
   font-size: 9pt; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
-  color: #fff; background: var(--accent); padding: 1.2mm 3mm; border-radius: 1mm;
+  color: var(--accent-contrast); background: var(--accent); padding: 1.2mm 3mm; border-radius: 1mm;
   margin-bottom: 4mm;
 }
 .label.hidden { display: none; }

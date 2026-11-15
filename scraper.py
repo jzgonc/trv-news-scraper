@@ -51,6 +51,8 @@ LOCAL_TZ = ZoneInfo("Europe/Berlin")
 DELIVERY_STEPS = ("nextcloud", "mail_redaktion", "mail_office")
 BASELINE_MARKER = ".baseline_done"
 LAST_FAILURE_FILE = ".last_failure"
+CATEGORY_COLORS_FILE = Path(__file__).resolve().parent / "templates" / "categories.json"
+DEFAULT_CATEGORY = "Allgemein"  # colors used for categories not listed in the file
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
@@ -350,13 +352,39 @@ def article_images(article_path: Path, meta: dict) -> list[Path]:
     return sorted(images_dir.glob("*")) if images_dir.exists() else []
 
 
+def _category_key(name: str) -> str:
+    return " ".join((name or "").split()).casefold()
+
+
+def category_colors(category: str) -> tuple[str | None, str | None]:
+    """(color, contrast_color) for a category name from templates/categories.json.
+
+    Unknown categories get the "Allgemein" colors; a missing/broken file falls back to
+    the defaults in print.css.
+    """
+    try:
+        data = json.loads(CATEGORY_COLORS_FILE.read_text(encoding="utf-8"))
+        by_name = {_category_key(name): colors for name, colors in data.items()}
+    except (OSError, ValueError, AttributeError) as exc:
+        log.warning("cannot read %s: %s", CATEGORY_COLORS_FILE, exc)
+        return None, None
+    key = _category_key(category)
+    if category and key not in by_name:
+        log.warning("no color defined for category %r, using %r", category, DEFAULT_CATEGORY)
+    entry = by_name.get(key) or by_name.get(_category_key(DEFAULT_CATEGORY)) or {}
+    return entry.get("color"), entry.get("contrast_color")
+
+
 def render_article_pdf(article_path: Path, meta: dict, body: str | None = None) -> int:
     meta_line = " · ".join(x for x in (format_local(meta.get("published_date"), "%d.%m.%Y"),
                                         meta.get("author")) if x)
+    accent, accent_contrast = category_colors(meta.get("category") or "")
     return pdf.render_pdf(
         article_path / "article.pdf",
         title=meta.get("title") or "",
         label=meta.get("category") or "",
+        accent=accent,
+        accent_contrast=accent_contrast,
         meta=meta_line,
         body_html=read_article_body(article_path) if body is None else body,
         images=article_images(article_path, meta),

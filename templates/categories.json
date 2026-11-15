@@ -1,0 +1,7 @@
+{
+  "Anfängerkurse":     { "color": "#90795a", "contrast_color": "#ffffff" },
+  "Breitensport":      { "color": "#c863ee", "contrast_color": "#ffffff" },
+  "Wettkampfsport":    { "color": "#f89b2f", "contrast_color": "#ffffff" },
+  "Kinder und Jugend": { "color": "#49abf9", "contrast_color": "#ffffff" },
+  "Allgemein":         { "color": "#63738a", "contrast_color": "#ffffff" }
+}

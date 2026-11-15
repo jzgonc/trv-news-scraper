@@ -21,6 +21,7 @@ MAX_IMAGE_EDGE = 1500
 JPEG_QUALITY = 80
 MAX_GRID_IMAGES = 3
 SHORT_TEXT_CHARS = 1800  # shorter texts first try a larger font (1-page layouts only)
+_HEX_COLOR = re.compile(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?")
 
 
 # --------------------------------------------------------------------------- cleaning
@@ -221,7 +222,16 @@ def prepare_images(paths, out_dir: Path, max_edge: int = MAX_IMAGE_EDGE) -> list
 
 # --------------------------------------------------------------------------- rendering
 
-def _build_html(title, label, meta, body_html, lead, grid, lead_small=False, large=False) -> str:
+def _color_style(accent: str | None, accent_contrast: str | None) -> str:
+    """Inline CSS overriding the default colors from print.css (only valid hex colors)."""
+    decls = [f"{var}: {value}" for var, value in (("--accent", accent),
+                                                   ("--accent-contrast", accent_contrast))
+             if value and _HEX_COLOR.fullmatch(value)]
+    return f' style="{"; ".join(decls)}"' if decls else ""
+
+
+def _build_html(title, label, meta, body_html, lead, grid, lead_small=False, large=False,
+                color_style="") -> str:
     lead_cls = "lead small" if lead_small else "lead"
     lead_html = f'<figure class="{lead_cls}"><img src="{lead.as_uri()}"></figure>' if lead else ""
     grid_html = ""
@@ -231,6 +241,7 @@ def _build_html(title, label, meta, body_html, lead, grid, lead_small=False, lar
     tpl = Template((TEMPLATE_DIR / "print.html").read_text(encoding="utf-8"))
     return tpl.substitute(
         title=html.escape(title),
+        color_style=color_style,
         label=html.escape(label),
         label_class="" if label else "hidden",
         meta=html.escape(meta),
@@ -242,12 +253,15 @@ def _build_html(title, label, meta, body_html, lead, grid, lead_small=False, lar
 
 
 def render_pdf(out_path: Path, *, title: str, label: str = "", meta: str = "",
-               body_html: str = "", images=(), max_pages: int = 2) -> int:
+               body_html: str = "", images=(), max_pages: int = 2,
+               accent: str | None = None, accent_contrast: str | None = None) -> int:
     """Render a print PDF and return its page count.
 
     Tries to fit on one page, then on `max_pages`, dropping grid images first and the
     lead image last. The text is never shortened: if even the text alone exceeds
     `max_pages`, the text-only version is written anyway.
+    `accent` / `accent_contrast` (hex colors) override the label, title and heading
+    color and the label text color; invalid values are ignored.
     """
     from weasyprint import CSS, HTML
     from weasyprint.text.fonts import FontConfiguration
@@ -255,6 +269,7 @@ def render_pdf(out_path: Path, *, title: str, label: str = "", meta: str = "",
     font_config = FontConfiguration()
     css = CSS(filename=str(TEMPLATE_DIR / "print.css"), font_config=font_config)
     body = clean_html(body_html)
+    color_style = _color_style(accent, accent_contrast)
 
     with tempfile.TemporaryDirectory() as tmp:
         imgs = prepare_images(list(images), Path(tmp))
@@ -276,7 +291,8 @@ def render_pdf(out_path: Path, *, title: str, label: str = "", meta: str = "",
         def render(variant):
             if variant not in cache:
                 lead, grid, lead_small, large = variant
-                doc_html = _build_html(title, label, meta, body, lead, list(grid), lead_small, large)
+                doc_html = _build_html(title, label, meta, body, lead, list(grid), lead_small, large,
+                                       color_style)
                 cache[variant] = HTML(string=doc_html, base_url=str(TEMPLATE_DIR)).render(
                     stylesheets=[css], font_config=font_config)
             return cache[variant]
