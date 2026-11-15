@@ -424,7 +424,7 @@ def save_article(session: requests.Session, entry: dict, article_path: Path, cat
 # --------------------------------------------------------------------------- delivery
 
 def remote_dir_for(settings, article_path: Path) -> str:
-    return f"{settings.nextcloud_base_folder}/{article_path.name}".strip("/")
+    return f"{settings.nextcloud_articles_folder}/{article_path.name}".strip("/")
 
 
 def upload_files(article_path: Path) -> list[str]:

@@ -42,7 +42,7 @@ class Settings:
     mail_to_admin: str
     nextcloud_share_url: str
     nextcloud_share_password: str
-    nextcloud_base_folder: str
+    nextcloud_articles_folder: str
     nextcloud_dav: str  # auto | new | legacy
 
 
@@ -66,6 +66,8 @@ def load_settings(env_file: Path | None = None) -> Settings:
         mail_to_admin=_get("MAIL_TO_ADMIN"),
         nextcloud_share_url=_get("NEXTCLOUD_SHARE_URL"),
         nextcloud_share_password=os.environ.get("NEXTCLOUD_SHARE_PASSWORD", ""),
-        nextcloud_base_folder=_get("NEXTCLOUD_BASE_FOLDER", "News").strip("/"),
+        # NEXTCLOUD_BASE_FOLDER is the old name, still read so existing .env files work
+        nextcloud_articles_folder=(_get("NEXTCLOUD_ARTICLES_FOLDER")
+                                   or _get("NEXTCLOUD_BASE_FOLDER", "App-News")).strip("/"),
         nextcloud_dav=_get("NEXTCLOUD_DAV", "auto").lower(),
     )

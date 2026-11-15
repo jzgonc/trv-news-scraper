@@ -2,7 +2,7 @@
 
 Scrapes all news articles from the AppPack news widget embedded on trv-fidelia.de and saves each one into its own directory (rich-text HTML body, metadata, original-quality images and a print PDF). On a server it runs every 30 minutes. For every **new** article it:
 
-1. uploads it to a Nextcloud public share (`News/<date>_<slug>/`),
+1. uploads it to a Nextcloud public share (`App-News/<date>_<slug>/`),
 2. emails the Redaktion with the Nextcloud link,
 3. emails the office with the print PDF attached.
 
@@ -82,7 +82,7 @@ In the external Nextcloud: create a folder (e.g. `TRV`) → **Share** → **Shar
 - optionally **Set password**
 - Save, then copy the link (`https://cloud.example.org/s/<token>`)
 
-The `News/` subfolder is created automatically.
+The `App-News/` subfolder is created automatically (name set by `NEXTCLOUD_ARTICLES_FOLDER`).
 
 ### 4. Fill in `.env`
 
@@ -112,7 +112,7 @@ This downloads all articles into `data/articles/` and creates the PDFs, then pri
 sudo docker compose run --rm scraper --test-to you@example.org
 ```
 
-This uploads the newest article to Nextcloud (`News/...`) and sends **both** mails to you only, marked `[TEST]`. Check the link in the first mail and the PDF attachment in the second. You can delete the test folder in Nextcloud afterwards.
+This uploads the newest article to Nextcloud (`App-News/...`) and sends **both** mails to you only, marked `[TEST]`. Check the link in the first mail and the PDF attachment in the second. You can delete the test folder in Nextcloud afterwards.
 
 ### 8. Baseline (once)
 
