@@ -69,10 +69,38 @@ Clone into a folder owned by you, so `git` runs without sudo and uses your key:
 sudo mkdir -p /opt/trv-news-scraper && sudo chown $USER: /opt/trv-news-scraper
 git clone git@github-trv:<owner>/<repo>.git /opt/trv-news-scraper
 cd /opt/trv-news-scraper
-mkdir -p data && sudo chown 1000:1000 data            # container runs as uid 1000
+mkdir -p data
 ```
 
 Use the `github-trv` host alias exactly as shown, not `github.com`, so this key is used.
+
+The container runs as uid 1000 and must be able to write to `data/`. Which host uid that is depends on whether Docker uses user-namespace remapping:
+
+```bash
+sudo docker info 2>/dev/null | grep -iE 'userns|root dir'
+```
+
+- **No `userns` in the output**: container uid 1000 is host uid 1000.
+
+  ```bash
+  sudo chown 1000:1000 data
+  ```
+
+- **`userns` is listed** and the root dir looks like `/var/lib/docker/100000.100000`: container uids are shifted by that first number, so container uid 1000 is host uid **101000**.
+
+  ```bash
+  sudo chown 101000:101000 data
+  ```
+
+  Don't turn remapping off; other containers on the server may depend on it. Files in `data/` then belong to uid 101000 on the host, so you need `sudo` to edit them.
+
+Check that the container can write:
+
+```bash
+sudo docker compose run --rm --entrypoint sh scraper -c 'ls -lnd /data; touch /data/test && echo OK && rm /data/test'
+```
+
+Inside the container, `/data` must belong to `1000 1000`. If it shows `65534` (nobody), the host owner is wrong. This check works only after the image is built (step 5).
 
 ### 3. Create the Nextcloud share link
 
@@ -157,6 +185,7 @@ Edit `MAIL_TO_REDAKTION`, `MAIL_TO_OFFICE` or `MAIL_TO_ADMIN` in `.env` (several
 
 ## Troubleshooting
 
-- **Re-send an article**: in its `metadata.json`, set the step under `"delivery"` to `false`. The next run repeats only that step.
+- **`PermissionError: [Errno 13] Permission denied: '/data/articles'`**: `data/` has the wrong host owner. With user-namespace remapping, `chown 1000:1000` is not enough; see the uid note in step 2.
+- **Re-send an article**: in its `metadata.json`, set the step under `"delivery"` to `false`. The next run repeats only that step (with remapping: edit with `sudo`).
 - **Nextcloud HTTP 401/404**: check the password and that the link allows upload and editing. Set `NEXTCLOUD_DAV=legacy` or `new` to skip auto-detection.
 - **Mail errors**: port 587 needs `SMTP_SECURITY=starttls`, port 465 needs `ssl`. Some providers require `SMTP_FROM` to match `SMTP_USER`.
