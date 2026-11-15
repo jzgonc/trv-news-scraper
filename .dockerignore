@@ -1,0 +1,9 @@
+.git
+.env
+data
+articles
+deploy
+**/__pycache__
+*.pdf
+.DS_Store
+AGENT_PROMPT.md

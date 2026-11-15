@@ -1,0 +1,11 @@
+[Unit]
+Description=TRV news scraper (one run)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/trv-news-scraper
+ExecStart=/usr/bin/docker compose run --rm -T scraper
+TimeoutStartSec=20min

@@ -1,0 +1,6 @@
+articles/
+.DS_Store
+data/
+.env
+__pycache__/
+*.tmp

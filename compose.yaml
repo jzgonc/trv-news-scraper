@@ -1,0 +1,9 @@
+services:
+  scraper:
+    build: .
+    image: trv-news-scraper:latest
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - ./data:/data
