@@ -118,10 +118,10 @@ Diese Nachricht wurde automatisch erstellt.
 """
 
 MAIL_OFFICE_SUBJECT = "Bitte aushängen: {title}"
-MAIL_OFFICE_BODY = """Hallo,
+MAIL_OFFICE_BODY = """Hallo Heinrich,
 
 anbei die Druckversion des neuen News-Artikels „{title}“ ({date}).
-Bitte ausdrucken und am Infoboard unter "Berichte" aushängen.
+Kannst du diesen bitte ausdrucken und am Infoboard unter "Berichte" aushängen.
 
 Vielen Dank!
 
