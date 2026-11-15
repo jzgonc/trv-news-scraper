@@ -24,7 +24,7 @@ Code: `scraper.py` (scraping and run logic), `pdf.py` + `templates/` + `fonts/` 
 - **Delivery status** is stored per article in `metadata.json` under `"delivery"`. Steps run in this order: Nextcloud → Redaktion mail → office mail. If a step fails, the remaining steps wait and are retried on the next run. Steps that already succeeded are never repeated.
 - **Failures** never stop the other articles. The exit code is non-zero, and `MAIL_TO_ADMIN` gets one summary mail per new set of failures, not one every 30 minutes.
 - **PDF layout**: the text is never cut. Grid images are dropped first to fit 1 page. The lead image is shrunk, and removed only if that is the only way to stay within 2 pages.
-- **PDF colors**: the category label, title, headings and links use the category's color from `templates/categories.json` (matched by name). Categories not listed there get the `Allgemein` colors and a warning in the log.
+- **PDF colors**: the category label and the line under the header use the category's color from `templates/categories.json` (matched by name). Categories not listed there get the `Allgemein` colors and a warning in the log.
 - A normal run refuses to start until `--baseline` has been run once, so a fresh install never mails every article that is already online.
 
 | Command | Purpose |

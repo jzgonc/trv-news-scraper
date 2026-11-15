@@ -19,7 +19,7 @@
   }
 }
 
-/* Default colors; overridden per category (templates/categories.json) via inline style on <html>. */
+/* Category colors (only the label and the line under the header); overridden per category (templates/categories.json) via inline style on <html>. */
 :root { --accent: #1b3a66; --accent-contrast: #ffffff; }
 
 html { font-family: "Raleway"; font-size: 11.5pt; line-height: 1.5; color: #1a1a1a;
@@ -36,7 +36,7 @@ header { margin-bottom: 7mm; }
 .label.hidden { display: none; }
 h1 {
   font-size: 28pt; font-weight: 800; line-height: 1.12; margin: 0 0 3mm 0;
-  color: var(--accent); hyphens: manual; overflow-wrap: break-word;
+  color: #1a1a1a; hyphens: manual; overflow-wrap: break-word;
 }
 .meta { font-size: 10.5pt; font-weight: 600; color: #555; }
 header::after { content: ""; display: block; width: 25mm; border-bottom: 1.2mm solid var(--accent); margin-top: 5mm; }
@@ -47,14 +47,14 @@ figure.lead.small img { max-height: 55mm; }
 
 .text { hyphens: auto; text-align: left; orphans: 3; widows: 3; }
 .text p { margin: 0 0 2.6mm 0; }
-.text h2, .text h3, .text h4 { color: var(--accent); line-height: 1.25; margin: 5mm 0 2mm 0; break-after: avoid; }
+.text h2, .text h3, .text h4 { color: #1a1a1a; line-height: 1.25; margin: 5mm 0 2mm 0; break-after: avoid; }
 .text h2 { font-size: 15pt; font-weight: 800; }
 .text h3 { font-size: 13pt; font-weight: 700; }
 .text h4 { font-size: 11.5pt; font-weight: 700; }
 .text ul, .text ol { margin: 0 0 2.6mm 0; padding-left: 6mm; }
 .text li { margin-bottom: 1mm; }
 .text strong { font-weight: 700; }
-.text a { color: var(--accent); text-decoration: none; }
+.text a { color: inherit; text-decoration: none; }
 
 .grid { display: grid; gap: 3mm; margin-top: 6mm; break-inside: avoid; }
 .grid-1 { grid-template-columns: 1fr; }

@@ -258,8 +258,8 @@ def render_pdf(out_path: Path, *, title: str, label: str = "", meta: str = "",
     Tries to fit on one page, then on `max_pages`, dropping grid images first and the
     lead image last. The text is never shortened: if even the text alone exceeds
     `max_pages`, the text-only version is written anyway.
-    `accent` / `accent_contrast` (hex colors) override the label, title and heading
-    color and the label text color; invalid values are ignored.
+    `accent` / `accent_contrast` (hex colors) override the label background / header
+    line color and the label text color; invalid values are ignored.
     """
     from weasyprint import CSS, HTML
     from weasyprint.text.fonts import FontConfiguration
