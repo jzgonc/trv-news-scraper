@@ -310,7 +310,9 @@ def guess_extension(media: dict) -> str:
     }.get(mime, "")
 
 
-def write_article_html(article_path: Path, title: str, published: str, author: str, body: str) -> None:
+def write_article_html(article_path: Path, title: str, published: str, author: str, category: str,
+                       body: str) -> None:
+    category_html = f'  <div class="category">{html.escape(category)}</div>\n' if category else ""
     html_doc = f"""<!DOCTYPE html>
 <html lang="de">
 <head>
@@ -320,12 +322,13 @@ def write_article_html(article_path: Path, title: str, published: str, author: s
   body {{ font-family: sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }}
   header {{ margin-bottom: 1.5rem; border-bottom: 1px solid #ccc; padding-bottom: 1rem; }}
   header h1 {{ margin: 0 0 0.5rem 0; }}
+  header .category {{ color: #666; font-size: 0.8rem; font-weight: bold; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.25rem; }}
   header .meta {{ color: #666; font-size: 0.9rem; }}
 </style>
 </head>
 <body>
 <header>
-  <h1>{html.escape(title)}</h1>
+{category_html}  <h1>{html.escape(title)}</h1>
   <div class="meta">
     {html.escape(published)}{f" &middot; {html.escape(author)}" if author else ""}
   </div>
@@ -441,7 +444,7 @@ def save_article(session: requests.Session, entry: dict, article_path: Path, cat
         "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "delivery": delivery,
     }
-    write_article_html(article_path, title, published, author, body)
+    write_article_html(article_path, title, published, author, category, body)
     pages = render_article_pdf(article_path, metadata, body)
     size_kb = (article_path / "article.pdf").stat().st_size // 1024
     log.info("    PDF: %d page(s), %d KB", pages, size_kb)
