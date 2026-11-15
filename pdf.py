@@ -20,7 +20,6 @@ TEMPLATE_DIR = BASE_DIR / "templates"
 MAX_IMAGE_EDGE = 1500
 JPEG_QUALITY = 80
 MAX_GRID_IMAGES = 3
-SHORT_TEXT_CHARS = 1800  # shorter texts first try a larger font (1-page layouts only)
 _HEX_COLOR = re.compile(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?")
 
 
@@ -230,7 +229,7 @@ def _color_style(accent: str | None, accent_contrast: str | None) -> str:
     return f' style="{"; ".join(decls)}"' if decls else ""
 
 
-def _build_html(title, label, meta, body_html, lead, grid, lead_small=False, large=False,
+def _build_html(title, label, meta, body_html, lead, grid, lead_small=False,
                 color_style="") -> str:
     lead_cls = "lead small" if lead_small else "lead"
     lead_html = f'<figure class="{lead_cls}"><img src="{lead.as_uri()}"></figure>' if lead else ""
@@ -247,7 +246,6 @@ def _build_html(title, label, meta, body_html, lead, grid, lead_small=False, lar
         meta=html.escape(meta),
         lead=lead_html,
         body=body_html,
-        text_class="text large" if large else "text",
         grid=grid_html,
     )
 
@@ -273,7 +271,7 @@ def render_pdf(out_path: Path, *, title: str, label: str = "", meta: str = "",
 
     with tempfile.TemporaryDirectory() as tmp:
         imgs = prepare_images(list(images), Path(tmp))
-        # Variants in order of preference: (lead, grid, small lead, large text).
+        # Variants in order of preference: (lead, grid, small lead).
         # Grid images go first, the lead image only if needed to stay within max_pages.
         image_cfgs = []
         if imgs:
@@ -281,17 +279,15 @@ def render_pdf(out_path: Path, *, title: str, label: str = "", meta: str = "",
                 image_cfgs.append((imgs[0], tuple(imgs[1:1 + n_grid]), False))
             image_cfgs.append((imgs[0], (), True))
         no_images = (None, (), False)
-        short = len(re.sub(r"<[^>]+>", "", body)) < SHORT_TEXT_CHARS
-        one_page = [c + (large,) for c in image_cfgs or [no_images]
-                    for large in ((True, False) if short else (False,))]
-        two_pages = [c + (False,) for c in image_cfgs] + [no_images + (False,)]
+        one_page = image_cfgs or [no_images]
+        two_pages = image_cfgs + [no_images]
 
         cache = {}
 
         def render(variant):
             if variant not in cache:
-                lead, grid, lead_small, large = variant
-                doc_html = _build_html(title, label, meta, body, lead, list(grid), lead_small, large,
+                lead, grid, lead_small = variant
+                doc_html = _build_html(title, label, meta, body, lead, list(grid), lead_small,
                                        color_style)
                 cache[variant] = HTML(string=doc_html, base_url=str(TEMPLATE_DIR)).render(
                     stylesheets=[css], font_config=font_config)
@@ -301,7 +297,7 @@ def render_pdf(out_path: Path, *, title: str, label: str = "", meta: str = "",
         chosen = next((render(v) for limit, variants in attempts for v in variants
                        if len(render(v).pages) <= limit), None)
         if chosen is None:
-            chosen = render(no_images + (False,))
+            chosen = render(no_images)
             log.warning("text of %r needs %d pages (> %d)", title, len(chosen.pages), max_pages)
 
         out_path = Path(out_path)

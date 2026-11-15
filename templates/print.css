@@ -10,7 +10,7 @@
   size: A4 portrait;
   margin: 16mm 18mm 18mm 18mm;
   @bottom-left {
-    content: "Tübinger Ruderverein Fidelia · News aus der TRV App";
+    content: "News aus der TRV App";
     font-family: "Raleway"; font-size: 8pt; color: #888;
   }
   @bottom-right {
@@ -47,8 +47,6 @@ figure.lead.small img { max-height: 55mm; }
 
 .text { hyphens: auto; text-align: left; orphans: 3; widows: 3; }
 .text p { margin: 0 0 2.6mm 0; }
-.text.large { font-size: 13.5pt; }
-.text.large p { margin-bottom: 3.4mm; }
 .text h2, .text h3, .text h4 { color: var(--accent); line-height: 1.25; margin: 5mm 0 2mm 0; break-after: avoid; }
 .text h2 { font-size: 15pt; font-weight: 800; }
 .text h3 { font-size: 13pt; font-weight: 700; }

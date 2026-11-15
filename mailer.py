@@ -35,7 +35,7 @@ class Mailer:
         msg["Date"] = formatdate(localtime=True)
         domain = parseaddr(self.sender)[1].rpartition("@")[2] or None
         msg["Message-ID"] = make_msgid(domain=domain)
-        msg.set_content(body)
+        msg.set_content(body.rstrip("\n") + "\n\n")  # always end with one blank line
         for path in attachments:
             path = Path(path)
             ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
