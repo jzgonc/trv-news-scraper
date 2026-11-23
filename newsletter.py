@@ -283,12 +283,19 @@ def _connect(s) -> imaplib.IMAP4:
     if not s.imap_host or not s.imap_user:
         raise ValueError("IMAP_HOST/IMAP_USER (or SMTP_HOST/SMTP_USER) must be set")
     context = ssl.create_default_context()
-    if s.imap_security == "ssl":
-        imap = imaplib.IMAP4_SSL(s.imap_host, s.imap_port, ssl_context=context, timeout=60)
-    else:
-        imap = imaplib.IMAP4(s.imap_host, s.imap_port, timeout=60)
-        imap.starttls(context)
-    imap.login(s.imap_user, s.imap_password)
+    where = f"IMAP {s.imap_host}:{s.imap_port} ({s.imap_security})"
+    try:
+        if s.imap_security == "ssl":
+            imap = imaplib.IMAP4_SSL(s.imap_host, s.imap_port, ssl_context=context, timeout=30)
+        else:
+            imap = imaplib.IMAP4(s.imap_host, s.imap_port, timeout=30)
+            imap.starttls(context)
+    except (OSError, imaplib.IMAP4.error) as exc:
+        raise ConnectionError(f"{where}: cannot connect: {exc}") from exc
+    try:
+        imap.login(s.imap_user, s.imap_password)
+    except imaplib.IMAP4.error as exc:
+        raise ConnectionError(f"{where}: login as {s.imap_user} failed: {exc}") from exc
     return imap
 
 
