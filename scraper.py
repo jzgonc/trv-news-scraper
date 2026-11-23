@@ -17,8 +17,11 @@ that is baked into the redirected URL. This script replays that same flow:
      and the office (PDF attached). Delivery state lives in each metadata.json, so failed
      steps are retried on the next run and successful steps are never repeated.
 
-Run modes: normal (default), --baseline (once: uploads everything to Nextcloud unless already
-there, marks all mails as sent),
+Newsletters arriving in the sending mailbox are handled the same way (newsletter.py):
+saved as HTML + print PDF, uploaded to Nextcloud and mailed to the office (no Redaktion mail).
+
+Run modes: normal (default), --baseline (once: uploads everything incl. newsletters in the
+mailbox to Nextcloud unless already there, marks all mails as sent),
 --dry-run (no upload/mail, prints what would be sent), --test-to ADDRESS (end-to-end test).
 """
 
@@ -30,15 +33,16 @@ import logging
 import re
 import shutil
 import sys
-import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlparse, parse_qs
-from zoneinfo import ZoneInfo
 
 import requests
 
+import newsletter
 import pdf
+from common import (USER_AGENT, download_file, format_local, load_saved, parse_date,
+                    sanitize_filename, slugify, unique_dir_name, write_json)
 from config import load_settings
 from mailer import Mailer
 from nextcloud import NextcloudShare
@@ -48,16 +52,11 @@ log = logging.getLogger("scraper")
 GRAPHQL_URL = "https://api.appack.de/graphql"
 SITE_URL = "https://trv-fidelia.de/"
 FETCH_LIMIT = 1000
-LOCAL_TZ = ZoneInfo("Europe/Berlin")
 DELIVERY_STEPS = ("nextcloud", "mail_redaktion", "mail_office")
 BASELINE_MARKER = ".baseline_done"
 LAST_FAILURE_FILE = ".last_failure"
 CATEGORY_COLORS_FILE = Path(__file__).resolve().parent / "templates" / "categories.json"
 DEFAULT_CATEGORY = "Allgemein"  # colors used for categories not listed in the file
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-)
 
 COMPONENT_QUERY = """
 query ApplicationComponent($id: ID!) {
@@ -130,19 +129,6 @@ Vielen Dank!
 
 Diese Nachricht wurde automatisch erstellt.
 """
-
-
-def slugify(value: str, max_len: int = 60) -> str:
-    value = unicodedata.normalize("NFKD", value or "").encode("ascii", "ignore").decode("ascii")
-    value = re.sub(r"[^\w\s-]", "", value).strip().lower()
-    value = re.sub(r"[\s_-]+", "-", value)
-    return value[:max_len].strip("-") or "untitled"
-
-
-def sanitize_filename(name: str) -> str:
-    name = name.replace("/", "_").replace("\\", "_")
-    name = re.sub(r'[<>:"|?*\x00-\x1f]', "_", name).strip()
-    return name or "file"
 
 
 def find_appack_iframe(session: requests.Session, site_url: str) -> str:
@@ -230,72 +216,10 @@ def content_hash(entry: dict) -> str:
     return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def parse_date(value: str) -> datetime | None:
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-
-
-def format_local(value: str, fmt: str) -> str:
-    dt = parse_date(value)
-    return dt.astimezone(LOCAL_TZ).strftime(fmt) if dt else ""
-
-
-def load_local_articles(output_dir: Path) -> dict:
-    """Map article id -> (directory, metadata) for all completely saved articles."""
-    found = {}
-    if not output_dir.exists():
-        return found
-    for meta_path in sorted(output_dir.glob("*/metadata.json")):
-        try:
-            data = json.loads(meta_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        if "id" in data:
-            found[data["id"]] = (meta_path.parent, data)
-    return found
-
-
-def write_json(path: Path, data: dict) -> None:
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
-
-
 def article_dir_name(entry: dict, used_names: set) -> str:
     date_part = (entry.get("publishedDate") or "")[:10] or "unknown-date"
     slug = slugify(entry.get("title") or entry.get("id"))
-    base = f"{date_part}_{slug}"
-    name = base
-    suffix = 1
-    while name in used_names:
-        suffix += 1
-        name = f"{base}-{suffix}"
-    used_names.add(name)
-    return name
-
-
-def download_image(session: requests.Session, url: str, dest: Path) -> bool:
-    """Download one image. Permanent errors (4xx) are skipped, others raise (retry next run)."""
-    try:
-        with session.get(url, stream=True, timeout=60) as resp:
-            resp.raise_for_status()
-            with open(dest, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=1 << 16):
-                    f.write(chunk)
-        return True
-    except requests.RequestException as exc:
-        if dest.exists():
-            dest.unlink()
-        status = getattr(exc.response, "status_code", None)
-        if status and 400 <= status < 500:
-            log.warning("    ! skipping image %s: HTTP %s", stable_media_url(url), status)
-            return False
-        raise
+    return unique_dir_name(f"{date_part}_{slug}", used_names)
 
 
 def guess_extension(media: dict) -> str:
@@ -413,7 +337,7 @@ def download_images(session: requests.Session, entry: dict, article_path: Path) 
         dest = tmp_dir / filename
         if dest.exists():
             dest = tmp_dir / f"{dest.stem}_{i}{dest.suffix}"
-        if download_image(session, url, dest):
+        if download_file(session, url, dest):
             names.append(dest.name)
     shutil.rmtree(images_dir, ignore_errors=True)
     tmp_dir.rename(images_dir)
@@ -455,8 +379,8 @@ def save_article(session: requests.Session, entry: dict, article_path: Path, cat
 
 # --------------------------------------------------------------------------- delivery
 
-def remote_dir_for(settings, article_path: Path) -> str:
-    return f"{settings.nextcloud_articles_folder}/{article_path.name}".strip("/")
+def remote_dir_for(folder: str, path: Path) -> str:
+    return f"{folder}/{path.name}".strip("/")
 
 
 def upload_files(article_path: Path) -> list[str]:
@@ -535,41 +459,54 @@ class Delivery:
             return f"<NEXTCLOUD_SHARE_URL>?path=/{remote_dir}"
         return self.share.folder_link(remote_dir)
 
-    def deliver(self, article_path: Path, meta: dict) -> None:
-        """Run the pending steps in order; stop at the first failure (raises)."""
-        s = self.settings
+    def deliver(self, path: Path, meta: dict, steps: tuple, remote_dir: str, files: list[str],
+                mails: dict) -> None:
+        """Run the pending `steps` in order; stop at the first failure (raises).
+        `mails` maps a mail step to (recipients, subject, body, attachments)."""
         state = meta.setdefault("delivery", {})
-        remote_dir = remote_dir_for(s, article_path)
-        if not (article_path / "article.pdf").exists():
-            render_article_pdf(article_path, meta)
-        texts = mail_texts(meta, self.link(remote_dir))
-        recipients = {"mail_redaktion": s.mail_to_redaktion, "mail_office": s.mail_to_office}
-
-        for step in DELIVERY_STEPS:
+        for step in steps:
             if state.get(step):
                 continue
             if step == "nextcloud":
-                files = upload_files(article_path)
                 if self.dry_run:
                     log.info("  [dry-run] would upload %d file(s) to %s/", len(files), remote_dir)
                     continue
-                if self.skip_uploaded and remote_up_to_date(self.share, article_path, remote_dir, files):
+                if self.skip_uploaded and remote_up_to_date(self.share, path, remote_dir, files):
                     log.info("  already on Nextcloud: %s/", remote_dir)
                 else:
-                    self.share.upload_folder(article_path, remote_dir, files, replace_subdirs=("images",))
+                    self.share.upload_folder(path, remote_dir, files, replace_subdirs=("images",))
                     log.info("  uploaded %d file(s) to Nextcloud %s/", len(files), remote_dir)
             else:
-                subject, body = texts[step]
-                attachments = [article_path / "article.pdf"] if step == "mail_office" else []
+                to, subject, body, attachments = mails[step]
                 if self.dry_run:
+                    names = ", ".join(Path(a).name for a in attachments)
                     log.info("  [dry-run] would send %s to %s%s\n----\nSubject: %s\n\n%s----",
-                             step, recipients[step] or "<not set>",
-                             " (attachment: article.pdf)" if attachments else "", subject, body)
+                             step, to or "<not set>",
+                             f" (attachment: {names})" if attachments else "", subject, body)
                     continue
-                self.mailer.send(recipients[step], subject, body, attachments)
-                log.info("  sent %s to %s", step, recipients[step])
+                self.mailer.send(to, subject, body, attachments)
+                log.info("  sent %s to %s", step, to)
             state[step] = True
-            write_json(article_path / "metadata.json", meta)
+            write_json(path / "metadata.json", meta)
+
+    def deliver_article(self, path: Path, meta: dict) -> None:
+        s = self.settings
+        remote_dir = remote_dir_for(s.nextcloud_articles_folder, path)
+        if not (path / "article.pdf").exists():
+            render_article_pdf(path, meta)
+        texts = mail_texts(meta, self.link(remote_dir))
+        mails = {"mail_redaktion": (s.mail_to_redaktion, *texts["mail_redaktion"], []),
+                 "mail_office": (s.mail_to_office, *texts["mail_office"], [path / "article.pdf"])}
+        self.deliver(path, meta, DELIVERY_STEPS, remote_dir, upload_files(path), mails)
+
+    def deliver_newsletter(self, path: Path, meta: dict) -> None:
+        s = self.settings
+        remote_dir = remote_dir_for(s.nextcloud_newsletter_folder, path)
+        if not (path / newsletter.PDF_NAME).exists():
+            newsletter.render_pdf(path, meta)
+        mails = {"mail_office": (s.mail_to_office, *newsletter.mail_texts(meta),
+                                 [path / newsletter.PDF_NAME])}
+        self.deliver(path, meta, newsletter.STEPS, remote_dir, newsletter.upload_files(path), mails)
 
 
 # --------------------------------------------------------------------------- run modes
@@ -577,7 +514,7 @@ class Delivery:
 def sync_articles(session, settings, output_dir: Path, baseline: bool) -> tuple[int, list[str]]:
     """Scrape and save new/edited articles. Returns (number saved, failures)."""
     failures = []
-    local = load_local_articles(output_dir)
+    local = load_saved(output_dir)
     log.info("Found %d existing articles in %s", len(local), output_dir)
 
     iframe_url = find_appack_iframe(session, SITE_URL)
@@ -647,54 +584,80 @@ def sync_articles(session, settings, output_dir: Path, baseline: bool) -> tuple[
     return saved, failures
 
 
-def deliver_pending(settings, output_dir: Path, dry_run: bool,
-                    skip_uploaded: bool = False) -> list[str]:
+def deliver_pending(output_dir: Path, steps: tuple, deliver, what: str) -> list[str]:
+    """Run `deliver(path, meta)` for every saved item in `output_dir` with pending steps."""
     failures = []
-    delivery = Delivery(settings, dry_run, skip_uploaded)
-    pending = [(path, meta) for path, meta in load_local_articles(output_dir).values()
-               if not all((meta.get("delivery") or {}).get(s, True) for s in DELIVERY_STEPS)]
+    pending = [(path, meta) for path, meta in load_saved(output_dir).values()
+               if not all((meta.get("delivery") or {}).get(s, True) for s in steps)]
     pending.sort(key=lambda pm: pm[1].get("published_date") or "")
-    log.info("%d article(s) with pending delivery", len(pending))
+    log.info("%d %s(s) with pending delivery", len(pending), what)
     for path, meta in pending:
         log.info("Delivering %s (%s)", path.name, ", ".join(
-            s for s in DELIVERY_STEPS if not meta["delivery"].get(s)))
+            s for s in steps if not meta["delivery"].get(s)))
         try:
-            delivery.deliver(path, meta)
+            deliver(path, meta)
         except Exception as exc:
             log.exception("Delivery failed for %s", path.name)
             failures.append(f"deliver {path.name}: {exc}")
     return failures
 
 
-def run_test(settings, output_dir: Path, address: str) -> int:
-    """Upload the newest local article and send both mails to `address` (state unchanged)."""
-    local = load_local_articles(output_dir)
-    if not local:
-        log.error("No saved articles in %s - run with --dry-run first", output_dir)
-        return 1
-    path, meta = max(local.values(), key=lambda pm: pm[1].get("published_date") or "")
-    log.info("Test with article %s", path.name)
-    delivery = Delivery(settings, dry_run=False)
+def _test_item(settings, delivery, address: str, path: Path, render, folder: str,
+               files, mails) -> bool:
+    """Render, upload and send the mails of one saved item to `address` (state unchanged).
+    `mails(link)` returns {step: (subject, body, attachments)}."""
     ok = True
+    remote_dir = remote_dir_for(folder, path)
     try:
-        pages = render_article_pdf(path, meta)
-        log.info("PDF OK: %d page(s), %d KB", pages, (path / "article.pdf").stat().st_size // 1024)
-        remote_dir = remote_dir_for(settings, path)
-        delivery.share.upload_folder(path, remote_dir, upload_files(path), replace_subdirs=("images",))
+        pages = render()
+        log.info("PDF OK: %d page(s)", pages)
+        delivery.share.upload_folder(path, remote_dir, files(path), replace_subdirs=("images",))
         log.info("Nextcloud OK: %s", delivery.link(remote_dir))
     except Exception:
         log.exception("Upload test failed")
         ok = False
-    texts = mail_texts(meta, delivery.link(remote_dir_for(settings, path))
-                       if settings.nextcloud_share_url else "<NEXTCLOUD_SHARE_URL fehlt>")
-    for step, attach in (("mail_redaktion", []), ("mail_office", [path / "article.pdf"])):
-        subject, body = texts[step]
+    link = (delivery.link(remote_dir) if settings.nextcloud_share_url
+            else "<NEXTCLOUD_SHARE_URL fehlt>")
+    for step, (subject, body, attachments) in mails(link).items():
         try:
-            delivery.mailer.send(address, "[TEST] " + subject, body, attach)
+            delivery.mailer.send(address, "[TEST] " + subject, body, attachments)
             log.info("Mail OK: %s -> %s", step, address)
         except Exception:
             log.exception("Mail test (%s) failed", step)
             ok = False
+    return ok
+
+
+def run_test(settings, output_dir: Path, newsletter_dir: Path, address: str) -> int:
+    """Upload the newest saved article and newsletter and send their mails to `address`."""
+    articles, newsletters = load_saved(output_dir), load_saved(newsletter_dir)
+    if not articles and not newsletters:
+        log.error("No saved articles in %s - run with --dry-run first", output_dir)
+        return 1
+    delivery = Delivery(settings, dry_run=False)
+    newest = lambda items: max(items.values(), key=lambda pm: pm[1].get("published_date") or "")
+    ok = True
+    if articles:
+        path, meta = newest(articles)
+        log.info("Test with article %s", path.name)
+
+        def article_mails(link):
+            texts = mail_texts(meta, link)
+            return {"mail_redaktion": (*texts["mail_redaktion"], []),
+                    "mail_office": (*texts["mail_office"], [path / "article.pdf"])}
+
+        ok &= _test_item(settings, delivery, address, path, lambda: render_article_pdf(path, meta),
+                         settings.nextcloud_articles_folder, upload_files, article_mails)
+    if newsletters:
+        path, meta = newest(newsletters)
+        log.info("Test with newsletter %s", path.name)
+        ok &= _test_item(settings, delivery, address, path,
+                         lambda: newsletter.render_pdf(path, meta),
+                         settings.nextcloud_newsletter_folder, newsletter.upload_files,
+                         lambda link: {"mail_office": (*newsletter.mail_texts(meta),
+                                                       [path / newsletter.PDF_NAME])})
+    else:
+        log.info("No saved newsletter in %s - newsletter test skipped", newsletter_dir)
     return 0 if ok else 1
 
 
@@ -736,7 +699,11 @@ def main():
     mode.add_argument("--dry-run", action="store_true",
                       help="Everything except upload and emails; print what would be sent")
     mode.add_argument("--test-to", metavar="ADDRESS",
-                      help="Upload the newest saved article and send both mails to ADDRESS")
+                      help="Upload the newest saved article and newsletter and send their "
+                           "mails to ADDRESS")
+    parser.add_argument("--newsletter-eml", metavar="FILE", action="append",
+                        help="Process this saved newsletter mail instead of reading the mailbox "
+                             "(repeatable; e.g. with --dry-run)")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stdout)
@@ -746,9 +713,11 @@ def main():
     settings = load_settings(args.env_file)
     output_dir = Path(args.output_dir) if args.output_dir else settings.data_dir / "articles"
     output_dir.mkdir(parents=True, exist_ok=True)
+    newsletter_dir = settings.data_dir / "newsletters"
+    newsletter_dir.mkdir(parents=True, exist_ok=True)
 
     if args.test_to:
-        sys.exit(run_test(settings, output_dir, args.test_to))
+        sys.exit(run_test(settings, output_dir, newsletter_dir, args.test_to))
 
     if not args.baseline and not args.dry_run and not (output_dir / BASELINE_MARKER).exists():
         log.error("No baseline yet in %s. Run once with --baseline first (otherwise every "
@@ -766,16 +735,41 @@ def main():
         log.exception("Scraping failed")
         failures.append(f"scrape: {exc}")
 
+    # Newsletters have their own baseline, so adding them to an existing installation does
+    # not mail every newsletter already in the mailbox.
+    nl_failures = []
+    use_newsletters = bool(settings.newsletter_from or args.newsletter_eml)
+    if use_newsletters and not (args.baseline or args.dry_run or args.newsletter_eml
+                                or (newsletter_dir / BASELINE_MARKER).exists()):
+        log.warning("Newsletters skipped: no baseline yet in %s. Run once with --baseline.",
+                    newsletter_dir)
+        use_newsletters = False
+    if use_newsletters:
+        try:
+            saved, nl_failures = newsletter.sync(session, settings, newsletter_dir, args.baseline,
+                                                 args.newsletter_eml or ())
+            log.info("Saved %d new newsletter(s)", saved)
+        except Exception as exc:
+            log.exception("Reading newsletters failed")
+            nl_failures.append(f"newsletters: {exc}")
+
     if args.baseline:
         # mails are already marked as sent, so this only uploads; failed uploads are retried
         # by the next normal run and do not block the baseline marker
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         if not failures:
-            (output_dir / BASELINE_MARKER).write_text(
-                datetime.now(timezone.utc).isoformat(timespec="seconds"), encoding="utf-8")
+            (output_dir / BASELINE_MARKER).write_text(now, encoding="utf-8")
             log.info("Baseline saved - from now on only new articles are mailed")
-        failures += deliver_pending(settings, output_dir, dry_run=False, skip_uploaded=True)
-    else:
-        failures += deliver_pending(settings, output_dir, args.dry_run)
+        if use_newsletters and not nl_failures and not args.newsletter_eml:
+            (newsletter_dir / BASELINE_MARKER).write_text(now, encoding="utf-8")
+            log.info("Newsletter baseline saved - from now on only new newsletters are mailed")
+
+    delivery = Delivery(settings, args.dry_run, skip_uploaded=args.baseline)
+    failures += deliver_pending(output_dir, DELIVERY_STEPS, delivery.deliver_article, "article")
+    if use_newsletters:
+        nl_failures += deliver_pending(newsletter_dir, newsletter.STEPS,
+                                       delivery.deliver_newsletter, "newsletter")
+    failures += nl_failures
 
     if not args.dry_run:
         notify_admin(settings, output_dir, failures)

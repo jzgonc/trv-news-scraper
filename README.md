@@ -8,15 +8,28 @@ Scrapes all news articles from the AppPack news widget embedded on trv-fidelia.d
 
 **Edited** articles (same id, changed title/text/images) are re-generated and overwritten in Nextcloud. No emails are sent for edits.
 
+**Newsletters**: the sending mailbox is subscribed to the club newsletter (CleverReach). Each run reads that mailbox via IMAP (read-only; nothing is marked, moved or deleted). For every new mail from `NEWSLETTER_FROM` it:
+
+1. saves the full newsletter as HTML and a print PDF with only the content (no header, no footer, no "Anstehende Termine", images inline),
+2. uploads both to Nextcloud (`Newsletter/<date>_<slug>/`),
+3. emails the office with the print PDF attached (board section "Aktuelles"). No Redaktion mail.
+
 ```text
 <DATA_DIR>/articles/<date>_<title-slug>/
   article.html    # title, date, author + rich-text body
   article.pdf     # A4 print version (1 page, at most 2)
   metadata.json   # id, title, author, dates, category, content_hash, delivery status
   images/         # attached images at original quality
+
+<DATA_DIR>/newsletters/<date>_<title-slug>/
+  newsletter.html # full newsletter, local images, without tracking pixels and personal unsubscribe link
+  newsletter.pdf  # A4 print version (content only)
+  newsletter.eml  # original mail (not uploaded)
+  metadata.json   # id (= Message-ID), title, date, delivery status
+  images/
 ```
 
-Code: `scraper.py` (scraping and run logic), `pdf.py` + `templates/` + `fonts/` (print PDF, Raleway font, SIL OFL), `nextcloud.py` (WebDAV upload), `mailer.py` (SMTP), `config.py` (`.env`).
+Code: `scraper.py` (scraping and run logic), `newsletter.py` (IMAP, newsletter extraction), `pdf.py` + `templates/` + `fonts/` (print PDF, Raleway font, SIL OFL), `nextcloud.py` (WebDAV upload), `mailer.py` (SMTP), `config.py` (`.env`), `common.py` (shared helpers).
 
 ## Behaviour
 
@@ -26,13 +39,16 @@ Code: `scraper.py` (scraping and run logic), `pdf.py` + `templates/` + `fonts/` 
 - **PDF layout**: the text is never cut. Grid images are dropped first to fit 1 page. The lead image is shrunk, and removed only if that is the only way to stay within 2 pages.
 - **PDF colors**: the category label and the line under the header use the category's color from `templates/categories.json` (matched by name). Categories not listed there get the `Allgemein` colors and a warning in the log.
 - A normal run refuses to start until `--baseline` has been run once, so a fresh install never mails every article that is already online.
+- **Newsletters** are recognized by their Message-ID and processed right away (no waiting time). The content is what lies between the header block ("Newsletter im ...") and the "Anstehende Termine" block (or the footer, if there are no dates). Dividers between several content blocks are printed as a line. The title is the mail subject without "TRV News:". Images are shrunk (down to 70 mm height) only if that saves a page; otherwise they move to page 2. Label and header line are TRV red.
+- Newsletters have their own baseline (`newsletters/.baseline_done`, also written by `--baseline`). Without it, a normal run skips newsletters with a warning. `NEWSLETTER_FROM=` (empty) turns newsletters off.
 
 | Command | Purpose |
 | --- | --- |
 | `scraper.py` | normal run (what the timer does) |
 | `scraper.py --dry-run` | everything except upload and mails; prints what would be sent |
-| `scraper.py --test-to you@example.org` | uploads the newest saved article and sends both mails to you; delivery status is not changed |
-| `scraper.py --baseline` | saves everything online, uploads it to Nextcloud (skipping folders already up to date there) and marks the mails as sent (first server run only) |
+| `scraper.py --test-to you@example.org` | uploads the newest saved article and newsletter and sends their mails to you; delivery status is not changed |
+| `scraper.py --baseline` | saves everything online and every newsletter in the mailbox, uploads it to Nextcloud (skipping folders already up to date there) and marks the mails as sent (first server run only) |
+| `scraper.py --dry-run --newsletter-eml mail.eml` | processes a saved newsletter mail instead of reading the mailbox (for testing) |
 
 Local run (Mac): `conda run -n scraper python scraper.py --dry-run` (needs `pip install -r requirements.txt` or conda-forge `weasyprint pillow`).
 
@@ -121,6 +137,8 @@ cp .env.example .env && chmod 600 .env && nano .env
 
 Set the SMTP values, the three recipients, and `NEXTCLOUD_SHARE_URL` / `NEXTCLOUD_SHARE_PASSWORD`. Put passwords in `'single quotes'`.
 
+For newsletters, the IMAP login defaults to the SMTP account. Set `IMAP_HOST` if your provider uses a different host for IMAP (e.g. `imap.example.org`).
+
 ### 5. Build the image
 
 ```bash
@@ -180,6 +198,14 @@ sudo docker compose build
 
 The timer picks up the new image on its next run. `data/` and `.env` are kept.
 
+**Update that adds newsletters**: add the new settings from `.env.example` (`NEXTCLOUD_NEWSLETTER_FOLDER`, `NEWSLETTER_FROM`, `IMAP_*`) to `.env`, then run the baseline once more:
+
+```bash
+sudo docker compose run --rm scraper --baseline
+```
+
+This uploads the newsletters already in the mailbox without mailing them. Articles already up to date on Nextcloud are skipped. Until then, normal runs skip newsletters with a warning in the log.
+
 ### 12. Change recipients
 
 Edit `MAIL_TO_REDAKTION`, `MAIL_TO_OFFICE` or `MAIL_TO_ADMIN` in `.env` (several addresses: comma-separated). No rebuild is needed; the next run uses the new values.
@@ -190,3 +216,5 @@ Edit `MAIL_TO_REDAKTION`, `MAIL_TO_OFFICE` or `MAIL_TO_ADMIN` in `.env` (several
 - **Re-send an article**: in its `metadata.json`, set the step under `"delivery"` to `false`. The next run repeats only that step (with remapping: edit with `sudo`).
 - **Nextcloud HTTP 401/404**: check the password and that the link allows upload and editing. Set `NEXTCLOUD_DAV=legacy` or `new` to skip auto-detection.
 - **Mail errors**: port 587 needs `SMTP_SECURITY=starttls`, port 465 needs `ssl`. Some providers require `SMTP_FROM` to match `SMTP_USER`.
+- **Newsletter not picked up**: check that the mail's sender is exactly `NEWSLETTER_FROM` and that it is in `IMAP_FOLDER` (not moved to spam). To re-process one, delete its folder in `data/newsletters/`.
+- **Newsletter PDF contains header/footer or misses content**: the CleverReach template changed. Adjust `HEADER_TEXT` / `STOP_TEXT` in `newsletter.py`; test with `--dry-run --newsletter-eml mail.eml`.

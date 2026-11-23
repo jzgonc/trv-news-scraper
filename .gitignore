@@ -4,3 +4,4 @@ data/
 .env
 __pycache__/
 *.tmp
+example_newsletter_email.eml

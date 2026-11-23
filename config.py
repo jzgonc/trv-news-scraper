@@ -44,6 +44,14 @@ class Settings:
     nextcloud_share_password: str
     nextcloud_articles_folder: str
     nextcloud_dav: str  # auto | new | legacy
+    nextcloud_newsletter_folder: str
+    newsletter_from: str  # empty = newsletter processing off
+    imap_host: str
+    imap_port: int
+    imap_security: str  # ssl | starttls
+    imap_user: str
+    imap_password: str
+    imap_folder: str
 
 
 def load_settings(env_file: Path | None = None) -> Settings:
@@ -52,6 +60,9 @@ def load_settings(env_file: Path | None = None) -> Settings:
     if security not in ("starttls", "ssl", "none"):
         raise ValueError(f"SMTP_SECURITY must be starttls, ssl or none (got {security!r})")
     default_port = {"starttls": "587", "ssl": "465", "none": "25"}[security]
+    imap_security = _get("IMAP_SECURITY", "ssl").lower()
+    if imap_security not in ("ssl", "starttls"):
+        raise ValueError(f"IMAP_SECURITY must be ssl or starttls (got {imap_security!r})")
     return Settings(
         data_dir=Path(_get("DATA_DIR", "data")),
         min_age_minutes=int(_get("MIN_AGE_MINUTES", "60")),
@@ -70,4 +81,13 @@ def load_settings(env_file: Path | None = None) -> Settings:
         nextcloud_articles_folder=(_get("NEXTCLOUD_ARTICLES_FOLDER")
                                    or _get("NEXTCLOUD_BASE_FOLDER", "App-News")).strip("/"),
         nextcloud_dav=_get("NEXTCLOUD_DAV", "auto").lower(),
+        nextcloud_newsletter_folder=_get("NEXTCLOUD_NEWSLETTER_FOLDER", "Newsletter").strip("/"),
+        newsletter_from=_get("NEWSLETTER_FROM", "newsletter@trv-fidelia.de"),
+        # the mailbox that receives the newsletter is the sending account by default
+        imap_host=_get("IMAP_HOST") or _get("SMTP_HOST"),
+        imap_port=int(_get("IMAP_PORT") or {"ssl": "993", "starttls": "143"}[imap_security]),
+        imap_security=imap_security,
+        imap_user=_get("IMAP_USER") or _get("SMTP_USER"),
+        imap_password=os.environ.get("IMAP_PASSWORD") or os.environ.get("SMTP_PASSWORD", ""),
+        imap_folder=_get("IMAP_FOLDER", "INBOX"),
     )
