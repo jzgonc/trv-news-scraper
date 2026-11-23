@@ -216,5 +216,6 @@ Edit `MAIL_TO_REDAKTION`, `MAIL_TO_OFFICE` or `MAIL_TO_ADMIN` in `.env` (several
 - **Re-send an article**: in its `metadata.json`, set the step under `"delivery"` to `false`. The next run repeats only that step (with remapping: edit with `sudo`).
 - **Nextcloud HTTP 401/404**: check the password and that the link allows upload and editing. Set `NEXTCLOUD_DAV=legacy` or `new` to skip auto-detection.
 - **Mail errors**: port 587 needs `SMTP_SECURITY=starttls`, port 465 needs `ssl`. Some providers require `SMTP_FROM` to match `SMTP_USER`.
+- **`newsletters: IMAP ...: cannot connect: timed out`**: `IMAP_HOST` is empty and `SMTP_HOST` is a send-only relay. Set `IMAP_HOST` to the provider's incoming server (domainFACTORY: `sslin.df.eu`).
 - **Newsletter not picked up**: check that the mail's sender is exactly `NEWSLETTER_FROM` and that it is in `IMAP_FOLDER` (not moved to spam). To re-process one, delete its folder in `data/newsletters/`.
 - **Newsletter PDF contains header/footer or misses content**: the CleverReach template changed. Adjust `HEADER_TEXT` / `STOP_TEXT` in `newsletter.py`; test with `--dry-run --newsletter-eml mail.eml`.
